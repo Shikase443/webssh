@@ -18,3 +18,5 @@
 !/server/index.ts
 !/server/sessions.ts
 !/server/store.ts
+!/assets/
+!/assets/webssh.png

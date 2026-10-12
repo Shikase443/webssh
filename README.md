@@ -2,6 +2,8 @@
 
 ブラウザからSSH接続するWebターミナルです。ブラウザを閉じてもSSH接続を維持します。
 
+![Web SSH](assets/webssh.png)
+
 ## 起動
 
 ```sh
