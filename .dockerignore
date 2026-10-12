@@ -1,0 +1,14 @@
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.server.json
+!vite.config.ts
+!index.html
+!src/
+!src/main.tsx
+!src/style.css
+!server/
+!server/index.ts
+!server/sessions.ts
+!server/store.ts

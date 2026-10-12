@@ -1,0 +1,21 @@
+services:
+  webssh:
+    build: .
+    image: webssh:1.0.4
+    container_name: webssh
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8093}:8093"
+    environment:
+      PORT: "8093"
+      DATA_DIR: /app/data
+      AUTH_MODE: "${AUTH_MODE:-token}"
+      APP_TOKEN: "${APP_TOKEN:-}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      MAX_SESSIONS: "${MAX_SESSIONS:-20}"
+    volumes:
+      - webssh-data:/app/data
+    stop_grace_period: 10s
+volumes:
+  webssh-data:
