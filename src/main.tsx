@@ -261,6 +261,7 @@ function App() {
     <button onClick={() => show(session.id)} aria-label={`${session.name}・${name}を開く`}>
       <span className={'session-dot ' + session.status} /><span className="session-label">{name}</span><small className={session.status}>{labels[session.status]}</small>
     </button>
+    {['connecting', 'connected'].includes(session.status) && <button className="session-disconnect" disabled={!online} title="SSH接続を強制切断" aria-label={`${session.name}・${name}を強制切断`} onClick={() => send({ type: 'disconnect', id: session.id })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 5.8a9 9 0 1 0 11.4 0"/></svg></button>}
     {['error', 'disconnected'].includes(session.status) && <button className="session-delete" title="セッションを削除" aria-label={`${session.name}・${name}を削除`} onClick={() => void api('sessions/' + session.id, 'DELETE').then(() => close(session.id)).catch(e => notify(e.message))}>×</button>}
   </div>;
   return <div className="app">
@@ -286,7 +287,7 @@ function App() {
         const session = sessions.find(s => s.id === id);
         return session && <div key={id} className={'tab ' + (id === active ? 'active' : '')}>
           <button onClick={() => setActive(id)}><i className={session.status}/>{session.name}</button>
-          {['connecting', 'connected'].includes(session.status) ? <button className="tab-action tab-disconnect" disabled={!online} title="SSH接続を強制切断" aria-label={`${session.name}を強制切断`} onClick={() => send({ type: 'disconnect', id: session.id })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 5.8a9 9 0 1 0 11.4 0"/></svg></button> : <button className="tab-action" disabled={!online} title="SSH接続を再接続" aria-label={`${session.name}を再接続`} onClick={() => reconnect(session)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7M20 12a8 8 0 0 0-2.3-5.7"/></svg></button>}
+          {['disconnected', 'error'].includes(session.status) && <button className="tab-action" disabled={!online} title="SSH接続を再接続" aria-label={`${session.name}を再接続`} onClick={() => reconnect(session)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7M20 12a8 8 0 0 0-2.3-5.7"/></svg></button>}
           <button title="表示だけ閉じる" aria-label={`${session.name}の表示を閉じる`} onClick={() => close(id)}>×</button>
         </div>;
       })}</nav>
