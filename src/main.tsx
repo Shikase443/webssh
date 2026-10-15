@@ -177,7 +177,7 @@ function App() {
   const [scrollback, setScrollback] = useState(10000);
   const [settings, setSettings] = useState(false);
   const [notice, setNotice] = useState('');
-  const [dialog, setDialog] = useState<{ edit?: Destination; connect?: Destination; newSession?: boolean } | null>(null);
+  const [dialog, setDialog] = useState<{ edit?: Destination; connect?: Destination } | null>(null);
   const [form, setForm] = useState({ name: '', host: '', port: 22, username: '', password: '', savePassword: false, saveDestination: true });
   const socket = useRef<WebSocket | null>(null);
   const handlers = useRef(new Set<(message: Message) => void>());
@@ -223,15 +223,13 @@ function App() {
     adjust(); window.visualViewport?.addEventListener('resize', adjust); window.addEventListener('resize', adjust);
     return () => { window.visualViewport?.removeEventListener('resize', adjust); window.removeEventListener('resize', adjust); };
   }, []);
-  function openDialog(value: { edit?: Destination; connect?: Destination; newSession?: boolean } = {}) {
+  function openDialog(value: { edit?: Destination; connect?: Destination } = {}) {
     const target = value.edit ?? value.connect;
     setForm({ name: target?.name ?? '', host: target?.host ?? '', port: target?.port ?? 22, username: target?.username ?? '', password: '', savePassword: target?.hasPassword ?? false, saveDestination: true }); setDialog(value);
   }
-  function connectDestination(target: Destination, extra = false) {
-    const existing = sessions.filter(s => s.destinationId === target.id && ['connected', 'connecting'].includes(s.status));
-    if (!extra && existing.length) { show(existing[0].id); return; }
+  function connectDestination(target: Destination) {
     if (target.hasPassword) { send({ type: 'connect', destinationId: target.id }); return; }
-    openDialog({ connect: target, newSession: extra });
+    openDialog({ connect: target });
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -256,7 +254,7 @@ function App() {
   const live = sessions.filter(s => ['connected', 'connecting'].includes(s.status));
   const reconnect = (session: Session) => {
     const target = destinations.find(destination => destination.id === session.destinationId);
-    if (target) connectDestination(target, true); else openDialog();
+    if (target) connectDestination(target); else openDialog();
   };
   const otherSessions = sessions.filter(session => !destinations.some(target => target.id === session.destinationId));
   const sessionRow = (session: Session, name: string) => <div key={session.id} className={'session-row ' + (active === session.id ? 'current' : '')}>
@@ -274,8 +272,8 @@ function App() {
         {destinations.map(target => {
           const grouped = sessions.filter(session => session.destinationId === target.id);
           return <div className="destination" key={target.id}>
-            <div className="destination-heading"><button className="destination-main" disabled={!online} onClick={() => connectDestination(target)} title="接続する / 接続中のターミナルを開く"><strong>{target.name}</strong></button>
-              <button className="destination-action" disabled={!online} title="新しいセッション" aria-label={`${target.name}に新しいセッションを追加`} onClick={() => connectDestination(target, true)}>＋</button>
+            <div className="destination-heading"><div className="destination-name"><strong>{target.name}</strong></div>
+              <button className="destination-action" disabled={!online} title="新しいセッション" aria-label={`${target.name}に新しいセッションを追加`} onClick={() => connectDestination(target)}>＋</button>
               <button className="destination-action" title="接続先を編集" aria-label={`${target.name}を編集`} onClick={() => openDialog({ edit: target })}>編集</button>
             </div>
             {!!grouped.length && <div className="destination-sessions">{grouped.map((session, index) => sessionRow(session, grouped.length > 1 ? `ターミナル ${index + 1}` : 'ターミナル'))}</div>}
