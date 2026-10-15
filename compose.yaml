@@ -1,7 +1,7 @@
 services:
   webssh:
     build: .
-    image: webssh:1.0.8
+    image: webssh:1.0.9
     container_name: webssh
     restart: unless-stopped
     ports:

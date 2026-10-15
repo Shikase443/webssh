@@ -187,7 +187,7 @@ function App() {
   const subscribe = (fn: (message: Message) => void) => { handlers.current.add(fn); return () => { handlers.current.delete(fn); }; };
   const load = async () => { const [targets, config] = await Promise.all([api('destinations'), api('settings')]); setDestinations(targets); setScrollback(config.scrollback); };
   const show = (id: string) => { setTabs(old => old.includes(id) ? old : [...old, id]); setActive(id); if (window.innerWidth < 760) setSidebar(false); };
-  const close = (id: string) => { setTabs(old => { const next = old.filter(value => value !== id); setActive(current => current === id ? (next[next.length - 1] ?? '') : current); return next; }); };
+  const removeTab = (id: string) => { setTabs(old => { const next = old.filter(value => value !== id); setActive(current => current === id ? (next[next.length - 1] ?? '') : current); return next; }); };
   useEffect(() => { void api('auth').then(setAuth).catch(error => notify(error.message)); }, []);
   useEffect(() => {
     if (!auth?.authenticated) return;
@@ -257,12 +257,16 @@ function App() {
     if (target) connectDestination(target); else openDialog();
   };
   const otherSessions = sessions.filter(session => !destinations.some(target => target.id === session.destinationId));
+  const sessionName = (session: Session) => {
+    const grouped = sessions.filter(item => item.destinationId === session.destinationId);
+    return grouped.length > 1 ? `ターミナル ${grouped.findIndex(item => item.id === session.id) + 1}` : 'ターミナル';
+  };
   const sessionRow = (session: Session, name: string) => <div key={session.id} className={'session-row ' + (active === session.id ? 'current' : '')}>
     <button onClick={() => show(session.id)} aria-label={`${session.name}・${name}を開く`}>
       <span className={'session-dot ' + session.status} /><span className="session-label">{name}</span><small className={session.status}>{labels[session.status]}</small>
     </button>
     {['connecting', 'connected'].includes(session.status) && <button className="session-disconnect" disabled={!online} title="SSH接続を強制切断" aria-label={`${session.name}・${name}を強制切断`} onClick={() => send({ type: 'disconnect', id: session.id })}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 5.8a9 9 0 1 0 11.4 0"/></svg></button>}
-    {['error', 'disconnected'].includes(session.status) && <button className="session-delete" title="セッションを削除" aria-label={`${session.name}・${name}を削除`} onClick={() => void api('sessions/' + session.id, 'DELETE').then(() => close(session.id)).catch(e => notify(e.message))}>×</button>}
+    {['error', 'disconnected'].includes(session.status) && <button className="session-delete" title="セッションを削除" aria-label={`${session.name}・${name}を削除`} onClick={() => void api('sessions/' + session.id, 'DELETE').then(() => removeTab(session.id)).catch(e => notify(e.message))}>×</button>}
   </div>;
   return <div className="app">
     <header><button className="menu" aria-label="接続先メニュー" title="接続先メニュー" onClick={() => setSidebar(value => !value)}>☰</button><div className="brand">⌘ Web SSH</div></header>
@@ -277,18 +281,17 @@ function App() {
               <button className="destination-action" disabled={!online} title="新しいセッション" aria-label={`${target.name}に新しいセッションを追加`} onClick={() => connectDestination(target)}>＋</button>
               <button className="destination-action" title="接続先を編集" aria-label={`${target.name}を編集`} onClick={() => openDialog({ edit: target })}>編集</button>
             </div>
-            {!!grouped.length && <div className="destination-sessions">{grouped.map((session, index) => sessionRow(session, grouped.length > 1 ? `ターミナル ${index + 1}` : 'ターミナル'))}</div>}
+            {!!grouped.length && <div className="destination-sessions">{grouped.map(session => sessionRow(session, sessionName(session)))}</div>}
           </div>;
         })}
-        {!!otherSessions.length && <><div className="section-title">未保存の接続</div>{otherSessions.map(session => sessionRow(session, session.name))}</>}
-        <div className="sidebar-footer"><div className="sidebar-note">タブの×で閉じてもSSH接続は続きます。</div><button className="sidebar-settings" onClick={() => setSettings(true)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 2 3-2v-3l3-1v-4l-3-1-1-3z"/><circle cx="11" cy="11" r="3"/></svg>設定</button></div>
+        {!!otherSessions.length && <><div className="section-title">未保存の接続</div>{otherSessions.map(session => sessionRow(session, `${session.name}（${sessionName(session)}）`))}</>}
+        <div className="sidebar-footer"><button className="sidebar-settings" onClick={() => setSettings(true)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 2 3-2v-3l3-1v-4l-3-1-1-3z"/><circle cx="11" cy="11" r="3"/></svg>設定</button></div>
       </aside>}
       <main><nav className="tabs">{tabs.map(id => {
         const session = sessions.find(s => s.id === id);
         return session && <div key={id} className={'tab ' + (id === active ? 'active' : '')}>
-          <button onClick={() => setActive(id)}><i className={session.status}/>{session.name}</button>
+          <button onClick={() => setActive(id)}><i className={session.status}/>{session.name}（{sessionName(session)}）</button>
           {['disconnected', 'error'].includes(session.status) && <button className="tab-action" disabled={!online} title="SSH接続を再接続" aria-label={`${session.name}を再接続`} onClick={() => reconnect(session)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7M20 12a8 8 0 0 0-2.3-5.7"/></svg></button>}
-          <button title="表示だけ閉じる" aria-label={`${session.name}の表示を閉じる`} onClick={() => close(id)}>×</button>
         </div>;
       })}</nav>
         {tabs.map(id => { const session = sessions.find(s => s.id === id); return session && <TerminalView key={id} session={session} active={active === id} online={online} send={send} subscribe={subscribe} scrollback={scrollback} notify={notify} />; })}
