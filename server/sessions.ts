@@ -159,24 +159,15 @@ export class Session {
 export class Sessions {
   items = new Map<string, Session>();
   listeners = new Set<WebSocket>();
-  attempts: number[] = [];
   constructor(readonly store: Store, readonly max = 20) {}
   list() { return [...this.items.values()].map(session => session.info()); }
   updated = () => { for (const ws of this.listeners) if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) ws.send(JSON.stringify({ type: 'sessions', sessions: this.list() })); };
-  checkAttempt() {
-    const now = Date.now();
-    this.attempts = this.attempts.filter(time => now - time < 60000);
-    if (this.attempts.length >= 10) throw new Error('接続試行が多すぎます。1分後に再試行してください');
-    this.attempts.push(now);
-  }
   reconnect(session: Session, password: string) {
     if (!['disconnected', 'error'].includes(session.status)) throw new Error('このセッションは接続中です');
-    this.checkAttempt();
     session.connect(password);
   }
   create(target: Destination, password: string, cols: number, rows: number) {
     if (this.items.size >= this.max) throw new Error('セッション数の上限です。不要な切断済みセッションを削除してください');
-    this.checkAttempt();
     const { password: _secret, ...metadata } = target;
     const session = new Session(metadata, this.store, this.updated, cols, rows);
     this.items.set(session.id, session);

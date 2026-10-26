@@ -70,11 +70,11 @@ function TerminalView({ session, active, online, send, subscribe, scrollback, no
     const element = host.current!;
     let selecting = false;
     let disposed = false;
-    const copySelection = () => {
+    const copySelection = (manual = false) => {
       const text = term.getSelection();
       if (!text) return;
-      if (!navigator.clipboard?.writeText) { notify('自動コピーにはHTTPS接続が必要です。ブラウザのコピー操作を使用してください'); return; }
-      void navigator.clipboard.writeText(text).catch(() => { if (!disposed) notify('コピーできませんでした。クリップボードの権限を確認するか、ブラウザのコピー操作を使用してください'); });
+      if (!navigator.clipboard?.writeText) { if (manual) notify('コピーにはHTTPS接続が必要です。ブラウザのコピー操作を使用してください'); return; }
+      void navigator.clipboard.writeText(text).catch(() => { if (manual && !disposed) notify('コピーできませんでした。クリップボードの権限を確認するか、ブラウザのコピー操作を使用してください'); });
     };
     // Copy the completed drag, rather than repeatedly writing partial selections.
     const selection = term.onSelectionChange(() => { if (!selecting && activeRef.current) copySelection(); });
@@ -110,7 +110,7 @@ function TerminalView({ session, active, online, send, subscribe, scrollback, no
     document.addEventListener('mouseup', mouseUp);
     term.attachCustomKeyEventHandler(event => {
       if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
-        copySelection();
+        copySelection(true);
         return false;
       }
       return true;
