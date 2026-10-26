@@ -171,8 +171,8 @@ function App() {
   const [accessKey, setAccessKey] = useState('');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [tabs, setTabs] = useState<string[]>([]);
-  const [active, setActive] = useState('');
+  const [{ tabs, active }, setNavigation] = useState<{ tabs: string[]; active: string }>({ tabs: [], active: '' });
+  const activeTab = useRef<HTMLDivElement>(null);
   const [online, setOnline] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [scrollback, setScrollback] = useState(10000);
@@ -187,8 +187,15 @@ function App() {
   const send = (data: Message) => { if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(data)); };
   const subscribe = (fn: (message: Message) => void) => { handlers.current.add(fn); return () => { handlers.current.delete(fn); }; };
   const load = async () => { const [targets, config] = await Promise.all([api('destinations'), api('settings')]); setDestinations(targets); setScrollback(config.scrollback); };
-  const show = (id: string) => { setTabs(old => old.includes(id) ? old : [...old, id]); setActive(id); if (window.innerWidth < 760) setSidebar(false); };
-  const removeTab = (id: string) => { setTabs(old => { const next = old.filter(value => value !== id); setActive(current => current === id ? (next[next.length - 1] ?? '') : current); return next; }); };
+  const show = (id: string) => {
+    setNavigation(old => ({ tabs: old.tabs.includes(id) ? old.tabs : [...old.tabs, id], active: id }));
+    if (window.innerWidth < 760) setSidebar(false);
+  };
+  const removeTab = (id: string) => { setNavigation(old => {
+    const tabs = old.tabs.filter(value => value !== id);
+    return { tabs, active: old.active === id ? (tabs[tabs.length - 1] ?? '') : old.active };
+  }); };
+  useEffect(() => { activeTab.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [active, tabs.length]);
   useEffect(() => { void api('auth').then(setAuth).catch(error => notify(error.message)); }, []);
   useEffect(() => {
     if (!auth?.authenticated) return;
@@ -204,10 +211,9 @@ function App() {
         if (message.type === 'sessions') {
           setSessions(message.sessions);
           const ids = new Set(message.sessions.map((session: Session) => session.id));
-          setTabs(old => {
-            const next = old.filter(id => ids.has(id));
-            setActive(current => next.includes(current) ? current : (next[next.length - 1] ?? ''));
-            return next;
+          setNavigation(old => {
+            const tabs = old.tabs.filter(id => ids.has(id));
+            return { tabs, active: tabs.includes(old.active) ? old.active : (tabs[tabs.length - 1] ?? '') };
           });
         }
         if (message.type === 'created') show(message.id);
@@ -293,8 +299,8 @@ function App() {
       </aside>}
       <main><nav className="tabs">{tabs.map(id => {
         const session = sessions.find(s => s.id === id);
-        return session && <div key={id} className={'tab ' + (id === active ? 'active' : '')}>
-          <button onClick={() => setActive(id)}><i className={session.status}/>{session.name}（{sessionName(session)}）</button>
+        return session && <div key={id} ref={id === active ? activeTab : undefined} className={'tab ' + (id === active ? 'active' : '')}>
+          <button onClick={() => show(id)}><i className={session.status}/>{session.name}（{sessionName(session)}）</button>
           {['disconnected', 'error'].includes(session.status) && <button className="tab-action" disabled={!online} title="SSH接続を再接続" aria-label={`${session.name}を再接続`} onClick={() => reconnect(session)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 0-2.3 5.7M20 12a8 8 0 0 0-2.3-5.7"/></svg></button>}
         </div>;
       })}</nav>
