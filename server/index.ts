@@ -131,7 +131,12 @@ wss.on('connection', ws => {
         // Deletion can race with an unmount detach or a final output acknowledgement.
         if (!session && ['detach', 'ack'].includes(message.type)) return;
         if (!session) throw new Error('セッションが見つかりません');
-        if (message.type === 'attach') await session.attach(viewer, message.cols, message.rows);
+        if (message.type === 'reconnect') {
+          const saved = store.data.destinations.find(item => item.id === session.target.id && item.host === session.target.host && item.port === session.target.port && item.username === session.target.username);
+          const password = typeof message.password === 'string' ? message.password : saved?.password;
+          if (password === undefined) throw new Error('SSHパスワードを入力してください');
+          sessions.reconnect(session, password);
+        } else if (message.type === 'attach') await session.attach(viewer, message.cols, message.rows);
         else if (message.type === 'ack') session.acknowledge(viewer.id, message.bytes);
         else if (message.type === 'detach') session.detach(viewer.id);
         else if (message.type === 'input') {

@@ -20,7 +20,7 @@ export class Session {
   error = '';
   readonly terminal;
   readonly serializer = new SerializeAddon();
-  readonly ssh = new Client();
+  ssh?: ssh2.Client;
   channel?: ssh2.ClientChannel;
   viewers = new Map<string, Viewer>();
   controller: string | null = null;
@@ -35,7 +35,7 @@ export class Session {
     // Terminal protocol replies must come from exactly one emulator, including when browsers are absent.
     this.terminal.onData(data => { if (this.channel && this.status === 'connected') this.channel.write(data); });
   }
-  info() { return { id: this.id, destinationId: this.target.id, name: this.target.name, host: this.target.host, username: this.target.username, status: this.status, error: this.error, created: this.created, viewers: this.viewers.size }; }
+  info() { return { id: this.id, destinationId: this.target.id, name: this.target.name, host: this.target.host, port: this.target.port, username: this.target.username, status: this.status, error: this.error, created: this.created, viewers: this.viewers.size }; }
   enqueue(task: () => Promise<void> | void) {
     this.chain = this.chain.then(task).catch(() => { this.end('ターミナル処理に失敗しました'); });
     return this.chain;
@@ -65,30 +65,38 @@ export class Session {
     }));
   }
   connect(password: string) {
-    this.ssh.on('ready', () => {
+    if (this.ssh && !this.finished) throw new Error('このセッションは接続中です');
+    const ssh = this.ssh = new Client();
+    const current = () => this.ssh === ssh && !this.finished;
+    this.finished = false; this.status = 'connecting'; this.error = '';
+    this.channel = undefined; this.decoder = new StringDecoder('utf8'); this.inputBlocked = false;
+    this.broadcast({ type: 'status', ...this.info() });
+    this.updated();
+    ssh.on('ready', () => {
       audit('ssh_authenticated', { id: this.id, host: this.target.host });
-      if (this.finished) { this.ssh.end(); return; }
-      this.ssh.shell({ term: 'xterm-256color', cols: this.terminal.cols, rows: this.terminal.rows }, (error, channel) => {
+      if (!current()) { ssh.end(); return; }
+      ssh.shell({ term: 'xterm-256color', cols: this.terminal.cols, rows: this.terminal.rows }, (error, channel) => {
+        if (!current()) { channel?.close(); return; }
         if (error) { this.end('対話型シェルを開始できませんでした'); return; }
-        if (this.finished) { channel.close(); return; }
         this.channel = channel;
         this.status = 'connected';
-        channel.on('data', (data: Buffer) => this.output(this.decoder.write(data)));
-        channel.stderr.on('data', (data: Buffer) => this.output(this.decoder.write(data)));
-        channel.on('drain', () => { this.inputBlocked = false; this.broadcast({ type: 'inputReady', id: this.id }); });
-        channel.on('error', () => this.end('SSHチャネルでエラーが発生しました'));
-        channel.on('close', () => { const tail = this.decoder.end(); if (tail) this.output(tail); this.end(); });
+        channel.on('data', (data: Buffer) => { if (current()) this.output(this.decoder.write(data)); });
+        channel.stderr.on('data', (data: Buffer) => { if (current()) this.output(this.decoder.write(data)); });
+        channel.on('drain', () => { if (!current()) return; this.inputBlocked = false; this.broadcast({ type: 'inputReady', id: this.id }); });
+        channel.on('error', () => { if (current()) this.end('SSHチャネルでエラーが発生しました'); });
+        channel.on('close', () => { if (!current()) return; const tail = this.decoder.end(); if (tail) this.output(tail); this.end(); });
         this.broadcast({ type: 'status', ...this.info() });
         this.updated();
       });
     });
-    this.ssh.on('error', (error: Error) => {
+    ssh.on('error', (error: Error) => {
+      if (!current()) return;
       const message = /authentication/i.test(error.message) ? 'SSH認証に失敗しました' : /ENOTFOUND/.test(error.message) ? 'ホスト名を解決できません' : /ECONNREFUSED/.test(error.message) ? 'SSH接続が拒否されました' : /timed out|ETIMEDOUT/i.test(error.message) ? 'SSH接続がタイムアウトしました' : 'SSH接続でエラーが発生しました';
       this.end(message);
     });
-    this.ssh.on('close', () => this.end());
+    ssh.on('close', () => { if (current()) this.end(); });
     audit('ssh_connect', { id: this.id, host: this.target.host, port: this.target.port });
-    this.ssh.connect({ host: this.target.host, port: this.target.port, username: this.target.username, password,
+    ssh.connect({ host: this.target.host, port: this.target.port, username: this.target.username, password,
       readyTimeout: 20000, keepaliveInterval: 15000, keepaliveCountMax: 3,
       hostVerifier: (hostKey: Buffer, callback: (valid: boolean) => void) => {
         const hash = createHash('sha256').update(hostKey).digest('hex');
@@ -97,7 +105,7 @@ export class Session {
         this.store.change(data => { data.hosts[key] = hash; }).then(() => {
           if (previous !== hash) audit(previous ? 'host_key_updated' : 'host_key_registered', { host: key });
           callback(true);
-        }).catch(() => { callback(false); this.end('ホスト鍵を保存できませんでした'); });
+        }).catch(() => { callback(false); if (current()) this.end('ホスト鍵を保存できませんでした'); });
       }
     });
   }
@@ -141,7 +149,7 @@ export class Session {
     this.finished = true;
     this.status = error ? 'error' : 'disconnected';
     this.error = error;
-    this.ssh.end();
+    this.ssh?.end();
     void this.enqueue(() => { this.broadcast({ type: 'status', ...this.info() }); this.updated(); });
     audit(error ? 'ssh_error' : 'ssh_disconnected', { id: this.id, ...(error ? { reason: error } : {}) });
   }
@@ -155,12 +163,20 @@ export class Sessions {
   constructor(readonly store: Store, readonly max = 20) {}
   list() { return [...this.items.values()].map(session => session.info()); }
   updated = () => { for (const ws of this.listeners) if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 4 * 1024 * 1024) ws.send(JSON.stringify({ type: 'sessions', sessions: this.list() })); };
-  create(target: Destination, password: string, cols: number, rows: number) {
+  checkAttempt() {
     const now = Date.now();
     this.attempts = this.attempts.filter(time => now - time < 60000);
     if (this.attempts.length >= 10) throw new Error('接続試行が多すぎます。1分後に再試行してください');
-    if (this.items.size >= this.max) throw new Error('セッション数の上限です。不要な切断済みセッションを削除してください');
     this.attempts.push(now);
+  }
+  reconnect(session: Session, password: string) {
+    if (!['disconnected', 'error'].includes(session.status)) throw new Error('このセッションは接続中です');
+    this.checkAttempt();
+    session.connect(password);
+  }
+  create(target: Destination, password: string, cols: number, rows: number) {
+    if (this.items.size >= this.max) throw new Error('セッション数の上限です。不要な切断済みセッションを削除してください');
+    this.checkAttempt();
     const { password: _secret, ...metadata } = target;
     const session = new Session(metadata, this.store, this.updated, cols, rows);
     this.items.set(session.id, session);

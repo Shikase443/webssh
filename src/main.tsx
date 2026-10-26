@@ -8,7 +8,7 @@ import '@xterm/xterm/css/xterm.css';
 import './style.css';
 
 type Destination = { id: string; name: string; host: string; port: number; username: string; hasPassword: boolean };
-type Session = { id: string; destinationId: string; name: string; host: string; username: string; status: string; error: string; viewers: number };
+type Session = { id: string; destinationId: string; name: string; host: string; port: number; username: string; status: string; error: string; viewers: number };
 type Message = Record<string, any>;
 const labels: Record<string, string> = { connecting: '接続中', connected: '接続済み', disconnected: '切断済み', error: '接続失敗' };
 async function api(url: string, method = 'GET', body?: unknown) {
@@ -124,6 +124,7 @@ function TerminalView({ session, active, online, send, subscribe, scrollback, no
       } else if (message.type === 'output') term.write(message.data, () => send({ type: 'ack', id: session.id, bytes: message.bytes }));
       else if (message.type === 'size') term.resize(message.cols, message.rows);
       else if (message.type === 'control') { control.current = message.active; setControlling(message.active); queue.current = []; waiting.current = false; }
+      else if (message.type === 'status' && message.status !== 'connected') { queue.current = []; waiting.current = false; }
       else if (message.type === 'inputReady') { waiting.current = false; flush(); }
     });
     const observer = new ResizeObserver(() => requestAnimationFrame(resize)); observer.observe(host.current!);
@@ -177,7 +178,7 @@ function App() {
   const [scrollback, setScrollback] = useState(10000);
   const [settings, setSettings] = useState(false);
   const [notice, setNotice] = useState('');
-  const [dialog, setDialog] = useState<{ edit?: Destination; connect?: Destination } | null>(null);
+  const [dialog, setDialog] = useState<{ edit?: Destination; connect?: Destination; reconnect?: Session } | null>(null);
   const [form, setForm] = useState({ name: '', host: '', port: 22, username: '', password: '', savePassword: false, saveDestination: true });
   const socket = useRef<WebSocket | null>(null);
   const handlers = useRef(new Set<(message: Message) => void>());
@@ -223,9 +224,9 @@ function App() {
     adjust(); window.visualViewport?.addEventListener('resize', adjust); window.addEventListener('resize', adjust);
     return () => { window.visualViewport?.removeEventListener('resize', adjust); window.removeEventListener('resize', adjust); };
   }, []);
-  function openDialog(value: { edit?: Destination; connect?: Destination } = {}) {
-    const target = value.edit ?? value.connect;
-    setForm({ name: target?.name ?? '', host: target?.host ?? '', port: target?.port ?? 22, username: target?.username ?? '', password: '', savePassword: target?.hasPassword ?? false, saveDestination: true }); setDialog(value);
+  function openDialog(value: { edit?: Destination; connect?: Destination; reconnect?: Session } = {}) {
+    const target = value.edit ?? value.connect ?? value.reconnect;
+    setForm({ name: target?.name ?? '', host: target?.host ?? '', port: target?.port ?? 22, username: target?.username ?? '', password: '', savePassword: target && 'hasPassword' in target ? target.hasPassword : false, saveDestination: !value.reconnect }); setDialog(value);
   }
   function connectDestination(target: Destination) {
     if (target.hasPassword) { send({ type: 'connect', destinationId: target.id }); return; }
@@ -235,7 +236,9 @@ function App() {
     event.preventDefault();
     try {
       if (dialog?.edit) { await api('destinations/' + dialog.edit.id, 'PUT', form); await load(); setDialog(null); return; }
-      if (dialog?.connect) {
+      if (dialog?.reconnect) {
+        send({ type: 'reconnect', id: dialog.reconnect.id, password: form.password });
+      } else if (dialog?.connect) {
         if (form.savePassword) { await api('destinations/' + dialog.connect.id, 'PUT', { ...form, savePassword: true }); await load(); }
         send({ type: 'connect', destinationId: dialog.connect.id, password: form.password });
       } else {
@@ -254,14 +257,15 @@ function App() {
   const live = sessions.filter(s => ['connected', 'connecting'].includes(s.status));
   const reconnect = (session: Session) => {
     const target = destinations.find(destination => destination.id === session.destinationId);
-    if (target) connectDestination(target); else openDialog();
+    if (target?.hasPassword && target.host === session.host && target.port === session.port && target.username === session.username) send({ type: 'reconnect', id: session.id });
+    else openDialog({ reconnect: session });
   };
   const otherSessions = sessions.filter(session => !destinations.some(target => target.id === session.destinationId));
   const sessionName = (session: Session) => {
     const grouped = sessions.filter(item => item.destinationId === session.destinationId);
     return grouped.length > 1 ? `ターミナル ${grouped.findIndex(item => item.id === session.id) + 1}` : 'ターミナル';
   };
-  const sessionRow = (session: Session, name: string) => <div key={session.id} className={'session-row ' + (active === session.id ? 'current' : '')}>
+  const sessionRow = (session: Session, name: string) => <div key={session.id} className={'session-row session-' + session.status + (active === session.id ? ' current' : '')}>
     <button onClick={() => show(session.id)} aria-label={`${session.name}・${name}を開く`}>
       <span className={'session-dot ' + session.status} /><span className="session-label">{name}</span><small className={session.status}>{labels[session.status]}</small>
     </button>
@@ -299,11 +303,11 @@ function App() {
       </main>
     </div>
     {notice && <div role="alert" className="toast" onClick={() => setNotice('')}>{notice}</div>}
-    {dialog && <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="modal-title"><h2>{dialog.edit ? '接続先を編集' : dialog.connect ? 'SSHパスワード入力' : '新規接続'}</h2><button type="button" onClick={() => { setDialog(null); setForm(old => ({ ...old, password: '' })); }}>×</button></div>
-      {[['name', '接続名'], ['host', 'ホスト名 / IPアドレス'], ['username', 'SSHユーザー名']].map(([key, label]) => <label key={key}>{label}<input required disabled={!!dialog.connect} value={form[key as 'name' | 'host' | 'username']} onChange={e => setForm(old => ({ ...old, [key]: e.target.value }))} autoCapitalize="none" autoCorrect="off" spellCheck={false}/></label>)}
-      <label>SSHポート<input type="number" min="1" max="65535" required disabled={!!dialog.connect} value={form.port} onChange={e => setForm(old => ({ ...old, port: Number(e.target.value) }))}/></label>
+    {dialog && <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="modal-title"><h2>{dialog.edit ? '接続先を編集' : (dialog.connect || dialog.reconnect) ? 'SSHパスワード入力' : '新規接続'}</h2><button type="button" onClick={() => { setDialog(null); setForm(old => ({ ...old, password: '' })); }}>×</button></div>
+      {[['name', '接続名'], ['host', 'ホスト名 / IPアドレス'], ['username', 'SSHユーザー名']].map(([key, label]) => <label key={key}>{label}<input required disabled={!!(dialog.connect || dialog.reconnect)} value={form[key as 'name' | 'host' | 'username']} onChange={e => setForm(old => ({ ...old, [key]: e.target.value }))} autoCapitalize="none" autoCorrect="off" spellCheck={false}/></label>)}
+      <label>SSHポート<input type="number" min="1" max="65535" required disabled={!!(dialog.connect || dialog.reconnect)} value={form.port} onChange={e => setForm(old => ({ ...old, port: Number(e.target.value) }))}/></label>
       <label>{dialog.edit?.hasPassword ? '新しいパスワード（空欄なら現在の値を維持）' : 'SSHパスワード'}<input type="password" autoComplete="new-password" required={!dialog.edit} value={form.password} onChange={e => setForm(old => ({ ...old, password: e.target.value }))}/></label>
-      {!dialog.edit && !dialog.connect && <label className="checkbox"><input type="checkbox" checked={form.saveDestination} onChange={e => setForm(old => ({ ...old, saveDestination: e.target.checked }))}/>接続先を保存する</label>}
+      {!dialog.edit && !dialog.connect && !dialog.reconnect && <label className="checkbox"><input type="checkbox" checked={form.saveDestination} onChange={e => setForm(old => ({ ...old, saveDestination: e.target.checked }))}/>接続先を保存する</label>}
       {form.saveDestination && <label className="checkbox"><input type="checkbox" checked={form.savePassword} onChange={e => setForm(old => ({ ...old, savePassword: e.target.checked }))}/>パスワードを保存する</label>}
       <div className="modal-actions">{dialog.edit && <button type="button" className="danger" onClick={() => { if (confirm('この接続先を削除しますか？ 接続中のセッションは維持されます。')) void api('destinations/' + dialog.edit!.id, 'DELETE').then(load).then(() => setDialog(null)).catch(e => notify(e.message)); }}>接続先を削除</button>}<span className="spacer"/><button className="primary" disabled={!online}>{dialog.edit ? '保存' : '接続'}</button></div>
     </form></div>}
