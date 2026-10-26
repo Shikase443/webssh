@@ -3,7 +3,7 @@ services:
     build:
       context: .
       pull: true
-    image: webssh:1.0.12
+    image: webssh:1.0.13
     container_name: webssh
     restart: unless-stopped
     ports:
