@@ -1,11 +1,11 @@
-FROM docker.io/library/node:26.12.1-trixie-slim AS build
+FROM docker.io/library/node:slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run check && npm run build && npm prune --omit=dev
 
-FROM docker.io/library/node:26.12.1-trixie-slim
+FROM docker.io/library/node:slim
 ENV NODE_ENV=production PORT=8093 DATA_DIR=/app/data
 WORKDIR /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
